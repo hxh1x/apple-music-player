@@ -175,7 +175,7 @@ export class HomeController implements Routes {
         ctx.req.query('language') ||
         'hindi,english,punjabi,tamil,telugu,marathi,bengali,kannada,malayalam,gujarati'
       const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)]
-      const url = 'https://www.jiosaavn.com/api.php?__call=webapi.getLaunchData&_format=json&_marker=0&api_version=4&ctx=web6dot0'
+      const url = 'https://www.jiosaavn.com/api.php?__call=webapi.getLaunchData&_format=json&_marker=0&api_version=4&ctx=web6dot0&cc=in'
 
       const response = await fetch(url, {
         headers: {

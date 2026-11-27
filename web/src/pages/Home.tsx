@@ -9,10 +9,11 @@ import HorizontalCarousel from "../components/music/HorizontalCarousel";
 import MediaCard from "../components/music/MediaCard";
 import TrackRow from "../components/music/TrackRow";
 import { decodeText, getBestImage, jiosaavnApi } from "../lib/jiosaavn";
+import { AuthActions } from "../store/authSlice";
 import { DownloadActions } from "../store/downloadSlice";
 import { playSong } from "../store/playerSlice";
 import { useAppDispatch, useAppSelector } from "../store/store";
-import type { Album, ArtistMini, Song } from "../types/jiosaavn";
+import type { Album, ArtistMini, HomeData, Song } from "../types/jiosaavn";
 
 interface SimpleAlbumCard {
   id: string;
@@ -32,6 +33,8 @@ const Home = () => {
   const [similarSongs, setSimilarSongs] = useState<Song[]>([]);
   const [similarAlbums, setSimilarAlbums] = useState<SimpleAlbumCard[]>([]);
   const [similarArtists, setSimilarArtists] = useState<ArtistMini[]>([]);
+  const [fallbackHome, setFallbackHome] = useState<HomeData | null>(null);
+  const [starterSongs, setStarterSongs] = useState<Song[]>([]);
   const [loading, setLoading] = useState(false);
 
   // Unique songs from history (currentSong first if playing)
@@ -217,6 +220,48 @@ const Home = () => {
     recentAlbums.length > 0 ||
     recentArtists.length > 0;
 
+  // When a visitor opens a fresh browser/domain with empty local history, load starter songs/albums/artists
+  useEffect(() => {
+    if (hasContent) return;
+    let active = true;
+    setLoading(true);
+    jiosaavnApi
+      .getHome(
+        "hindi,english,punjabi,tamil,telugu,marathi,bengali,kannada,malayalam,gujarati"
+      )
+      .then(async (data) => {
+        if (!active) return;
+        setFallbackHome(data);
+        const songIds = [...data.trending, ...data.albums]
+          .filter((i) => i.type === "song")
+          .map((i) => i.id);
+        const uniqueIds = Array.from(new Set(songIds)).slice(0, 16);
+        if (uniqueIds.length) {
+          const songs = await jiosaavnApi.getSongsByIds(uniqueIds);
+          if (active && songs.length) {
+            setStarterSongs(songs);
+            return;
+          }
+        }
+        const searchFallback = await jiosaavnApi.searchSongs("top hits", 0, 16);
+        if (active) setStarterSongs(searchFallback.results || []);
+      })
+      .catch(async () => {
+        try {
+          const searchFallback = await jiosaavnApi.searchSongs("top hits", 0, 16);
+          if (active) setStarterSongs(searchFallback.results || []);
+        } catch {
+          // ignore
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [hasContent]);
+
   return (
     <div className="space-y-9">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 border-b border-black/[0.06] dark:border-white/[0.08] pb-3">
@@ -238,21 +283,93 @@ const Home = () => {
       </div>
 
       {!hasContent ? (
-        <section className="rounded-3xl border border-black/10 dark:border-white/10 bg-zinc-100/80 dark:bg-zinc-900/70 p-8 sm:p-12 text-center space-y-4">
-          <h2 className="text-xl font-bold">Nothing Played Yet</h2>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400 max-w-md mx-auto">
-            Search and play any song, album, or artist — your Recently Played
-            Albums, Similar Albums, Artists, and Similar Songs will populate
-            here automatically.
-          </p>
-          <Link
-            to="/search"
-            className="inline-flex items-center gap-2 rounded-xl bg-[#fa243c] px-6 py-2.5 text-sm font-semibold text-white shadow-md hover:bg-[#e01e35]"
-          >
-            <SearchIcon className="h-4 w-4" />
-            Search Songs, Albums &amp; Artists
-          </Link>
-        </section>
+        <div className="space-y-9">
+          <section className="rounded-2xl border border-black/10 dark:border-white/10 bg-zinc-100/80 dark:bg-zinc-900/70 p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-base sm:text-lg font-bold">
+                Start Listening or Sign In to Sync
+              </h2>
+              <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
+                Play any song below to build your Recently Played Albums, Artists &amp;
+                Similar recommendations — or sign in to sync history from another device.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => dispatch(AuthActions.openModal())}
+              className="shrink-0 rounded-xl bg-[#fa243c] px-4 py-2 text-xs font-semibold text-white shadow hover:bg-[#e01e35]"
+            >
+              Sign In / Sync
+            </button>
+          </section>
+
+          {fallbackHome?.artists && fallbackHome.artists.length > 0 && (
+            <HorizontalCarousel title="Artists">
+              {fallbackHome.artists.map((ar) => (
+                <MediaCard
+                  key={ar.id}
+                  id={ar.id}
+                  title={ar.name}
+                  subtitle="Artist"
+                  type="artist"
+                  image={ar.image}
+                />
+              ))}
+            </HorizontalCarousel>
+          )}
+
+          {fallbackHome?.albums && fallbackHome.albums.length > 0 && (
+            <HorizontalCarousel title="Albums">
+              {fallbackHome.albums
+                .filter((i) => i.type === "album")
+                .map((al) => (
+                  <MediaCard
+                    key={al.id}
+                    id={al.id}
+                    title={al.name}
+                    subtitle={al.subtitle || al.language}
+                    type="album"
+                    image={al.image}
+                    artists={al.artists}
+                  />
+                ))}
+            </HorizontalCarousel>
+          )}
+
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold tracking-tight">Popular Songs</h2>
+              {starterSongs.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => playList(starterSongs)}
+                  className="flex items-center gap-1.5 rounded-xl bg-[#fa243c] px-4 py-2 text-xs font-semibold text-white hover:bg-[#e01e35]"
+                >
+                  <PlayIcon className="h-3.5 w-3.5" />
+                  Play All
+                </button>
+              )}
+            </div>
+            {loading && starterSongs.length === 0 ? (
+              <div className="space-y-2 animate-pulse">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <div key={n} className="h-14 rounded-xl bg-zinc-200 dark:bg-zinc-800" />
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-6 divide-y divide-black/[0.04] dark:divide-white/[0.05]">
+                {starterSongs.map((song, idx) => (
+                  <TrackRow
+                    key={song.id}
+                    song={song}
+                    index={idx}
+                    queueContext={starterSongs}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
       ) : (
         <>
           {/* 1. Recently Played Albums */}
