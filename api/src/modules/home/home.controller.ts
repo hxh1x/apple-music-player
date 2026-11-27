@@ -1,6 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { createDownloadLinks, createImageLinks } from '#common/helpers'
 import { userAgents } from '#common/constants'
+import { PlaylistService } from '#modules/playlists/services'
 import { SongService } from '#modules/songs/services'
 import type { Routes } from '#common/types'
 
@@ -163,10 +164,12 @@ const normalizeHomeItem = (item: RawItem) => {
 export class HomeController implements Routes {
   public controller: OpenAPIHono
   private songService: SongService
+  private playlistService: PlaylistService
 
   constructor() {
     this.controller = new OpenAPIHono()
     this.songService = new SongService()
+    this.playlistService = new PlaylistService()
   }
 
   public initRoutes() {
@@ -177,19 +180,92 @@ export class HomeController implements Routes {
       const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)]
       const url = 'https://www.jiosaavn.com/api.php?__call=webapi.getLaunchData&_format=json&_marker=0&api_version=4&ctx=web6dot0&cc=in'
 
-      const response = await fetch(url, {
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': randomUserAgent,
-          Cookie: `L=${encodeURIComponent(language)}; gdpr_acceptance=true; DL=english`
-        }
-      })
+      const [response, intlPlaylist] = await Promise.all([
+        fetch(url, {
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': randomUserAgent,
+            Cookie: `L=${encodeURIComponent(language)}; gdpr_acceptance=true; DL=english`
+          }
+        }),
+        this.playlistService
+          .getPlaylistById({ id: '1134595537', page: 0, limit: 20 })
+          .catch(() => null)
+      ])
 
       const raw = (await response.json()) as Record<string, unknown>
       const mapList = (key: string) =>
         Array.isArray(raw[key]) ? (raw[key] as RawItem[]).map(normalizeHomeItem) : []
 
-      const artists = Array.isArray(raw['artist_recos'])
+      const isSpamSleep = (name: string) =>
+        /sleep songs|baby sleep|lullaby|meditation at the spa/i.test(name)
+
+      const intlSongs = (intlPlaylist?.songs || []).map((s) => ({
+        id: s.id,
+        name: decodeHtml(s.name),
+        subtitle: s.artists?.primary?.map((a) => decodeHtml(a.name)).join(', ') || '',
+        type: 'song',
+        url: s.url,
+        language: s.language || 'english',
+        year: s.year,
+        explicitContent: s.explicitContent,
+        songCount: null,
+        duration: s.duration,
+        album: s.album,
+        artists: { primary: s.artists?.primary || [] },
+        image: s.image,
+        downloadUrl: s.downloadUrl
+      }))
+
+      const intlAlbums = (intlPlaylist?.songs || [])
+        .filter((s) => s.album?.id && s.album?.name)
+        .map((s) => ({
+          id: s.album!.id!,
+          name: decodeHtml(s.album!.name!),
+          subtitle: s.artists?.primary?.map((a) => decodeHtml(a.name)).join(', ') || 'Album',
+          type: 'album',
+          url: s.album?.url || '',
+          language: s.language || 'english',
+          year: s.year,
+          explicitContent: s.explicitContent,
+          songCount: null,
+          duration: null,
+          album: null,
+          artists: { primary: s.artists?.primary || [] },
+          image: s.image,
+          downloadUrl: []
+        }))
+
+      const intlArtists = (intlPlaylist?.songs || [])
+        .flatMap((s) => s.artists?.primary || [])
+        .filter((a) => a.id && a.name && a.image?.length)
+        .map((a) => ({
+          id: a.id,
+          name: decodeHtml(a.name),
+          subtitle: 'Artist',
+          type: 'artist',
+          url: a.url || '',
+          language: 'english',
+          year: null,
+          explicitContent: false,
+          songCount: null,
+          duration: null,
+          album: null,
+          artists: { primary: [] },
+          image: a.image,
+          downloadUrl: []
+        }))
+
+      const dedupeById = <T extends { id: string }>(arr: T[]) => {
+        const seen = new Set<string>()
+        return arr.filter((item) => {
+          if (!item.id || seen.has(item.id)) return false
+          seen.add(item.id)
+          return true
+        })
+      }
+
+      const rawArtists = Array.isArray(raw['artist_recos'])
         ? (raw['artist_recos'] as RawItem[]).map((a) => ({
             ...normalizeHomeItem(a),
             type: 'artist',
@@ -197,14 +273,23 @@ export class HomeController implements Routes {
           }))
         : []
 
+      // Interleave international + regional artists, albums, and trending songs
+      const mixedArtists = dedupeById([
+        ...intlArtists.slice(0, 8),
+        ...rawArtists.slice(0, 8),
+        ...intlArtists.slice(8)
+      ])
+      const regionalAlbums = mapList('new_albums').filter((i) => !isSpamSleep(i.name))
+      const regionalTrending = mapList('new_trending').filter((i) => !isSpamSleep(i.name))
+
       return ctx.json({
         success: true,
         data: {
-          trending: mapList('new_trending'),
+          trending: dedupeById([...intlSongs.slice(0, 10), ...regionalTrending]),
           charts: mapList('charts'),
-          albums: mapList('new_albums'),
+          albums: dedupeById([...intlAlbums.slice(0, 10), ...regionalAlbums]),
           playlists: mapList('top_playlists'),
-          artists,
+          artists: mixedArtists,
           freshHits: mapList('promo:vx:data:68'),
           genresMoods: mapList('promo:vx:data:76'),
           decades: mapList('promo:vx:data:185')

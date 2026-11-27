@@ -236,6 +236,14 @@ const Home = () => {
           .filter((i) => i.type === "song")
           .map((i) => i.id);
         const uniqueIds = Array.from(new Set(songIds)).slice(0, 16);
+        // If trending items already carry downloadUrl (e.g. International Top 50), use them immediately
+        const readyTrending = data.trending.filter(
+          (i) => i.type === "song" && i.downloadUrl?.length
+        ) as unknown as Song[];
+        if (readyTrending.length >= 8) {
+          if (active) setStarterSongs(readyTrending.slice(0, 16));
+          return;
+        }
         if (uniqueIds.length) {
           const songs = await jiosaavnApi.getSongsByIds(uniqueIds);
           if (active && songs.length) {
