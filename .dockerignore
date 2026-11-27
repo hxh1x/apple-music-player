@@ -1,0 +1,8 @@
+.tools/
+android/
+**/node_modules/
+web/dist/
+api/data/
+tmp*
+*.log
+.git/

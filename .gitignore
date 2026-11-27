@@ -1,0 +1,18 @@
+# Local portable binaries (.tools/bun.exe is >100MB, Docker/CI installs Bun & FFmpeg)
+.tools/
+
+# Dependencies & build outputs
+**/node_modules/
+web/dist/
+api/dist/
+android/.gradle/
+android/app/build/
+android/local.properties
+
+# Local database & temp files
+api/data/
+tmp/
+tmp*
+*.log
+.DS_Store
+Thumbs.db

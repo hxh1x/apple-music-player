@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: apple-music-jiosaavn
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
+      - key: PUBLIC_DIR
+        value: /app/public
