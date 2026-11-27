@@ -2,7 +2,6 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { apiReference } from '@scalar/hono-api-reference'
-import { serveStatic } from 'hono/bun'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { prettyJSON } from 'hono/pretty-json'
@@ -33,9 +32,17 @@ export class App {
 
     const publicDir = process.env.PUBLIC_DIR
     if (publicDir && existsSync(path.join(publicDir, 'index.html'))) {
-      this.app.use('/assets/*', serveStatic({ root: publicDir }))
-      this.app.get('/', serveStatic({ path: path.join(publicDir, 'index.html') }))
-      this.app.get('/favicon.ico', serveStatic({ root: publicDir }))
+      const resolvedPublic = path.resolve(publicDir)
+      const indexFile = path.join(resolvedPublic, 'index.html')
+      this.app.get('/assets/*', async (ctx) => {
+        const rel = ctx.req.path.replace(/^\/+/, '')
+        const fullPath = path.resolve(resolvedPublic, rel)
+        if (!fullPath.startsWith(resolvedPublic)) return ctx.notFound()
+        const file = Bun.file(fullPath)
+        if (!(await file.exists())) return ctx.notFound()
+        return new Response(file)
+      })
+      this.app.get('/', () => new Response(Bun.file(indexFile)))
     } else {
       this.app.route('/', Home)
     }
