@@ -235,13 +235,13 @@ const Home = () => {
         const songIds = [...data.trending, ...data.albums]
           .filter((i) => i.type === "song")
           .map((i) => i.id);
-        const uniqueIds = Array.from(new Set(songIds)).slice(0, 16);
+        const uniqueIds = Array.from(new Set(songIds)).slice(0, 36);
         // If trending items already carry downloadUrl (e.g. International Top 50), use them immediately
         const readyTrending = data.trending.filter(
           (i) => i.type === "song" && i.downloadUrl?.length
         ) as unknown as Song[];
         if (readyTrending.length >= 8) {
-          if (active) setStarterSongs(readyTrending.slice(0, 16));
+          if (active) setStarterSongs(readyTrending.slice(0, 36));
           return;
         }
         if (uniqueIds.length) {
@@ -251,12 +251,12 @@ const Home = () => {
             return;
           }
         }
-        const searchFallback = await jiosaavnApi.searchSongs("top hits", 0, 16);
+        const searchFallback = await jiosaavnApi.searchSongs("top hits", 0, 36);
         if (active) setStarterSongs(searchFallback.results || []);
       })
       .catch(async () => {
         try {
-          const searchFallback = await jiosaavnApi.searchSongs("top hits", 0, 16);
+          const searchFallback = await jiosaavnApi.searchSongs("top hits", 0, 36);
           if (active) setStarterSongs(searchFallback.results || []);
         } catch {
           // ignore
