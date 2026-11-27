@@ -1,5 +1,5 @@
 import { Endpoints } from '#common/constants'
-import { useFetch } from '#common/helpers'
+import { getGlobalArtistFallback, useFetch } from '#common/helpers'
 import { createArtistPayload } from '#modules/artists/helpers'
 import { HTTPException } from 'hono/http-exception'
 import type { IUseCase } from '#common/types'
@@ -33,6 +33,19 @@ export class GetArtistByIdUseCase implements IUseCase<GetArtistByIdArgs, z.infer
 
     if (!data) throw new HTTPException(404, { message: 'artist not found' })
 
-    return createArtistPayload(data)
+    const payload = createArtistPayload(data)
+
+    // On non-India IPs (e.g. Render US), JioSaavn strips topSongs & topAlbums for Western artists.
+    if ((payload.topSongs?.length || 0) === 0 || (payload.topAlbums?.length || 0) === 0) {
+      const fallback = await getGlobalArtistFallback(payload.id, payload.name)
+      if ((payload.topSongs?.length || 0) === 0 && fallback.topSongs.length > 0) {
+        payload.topSongs = fallback.topSongs.slice(0, songCount || 20)
+      }
+      if ((payload.topAlbums?.length || 0) === 0 && fallback.topAlbums.length > 0) {
+        payload.topAlbums = fallback.topAlbums.slice(0, albumCount || 12)
+      }
+    }
+
+    return payload
   }
 }

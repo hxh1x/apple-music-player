@@ -1,4 +1,5 @@
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
+import { filterOutKaraoke, searchGlobalCatalog } from '#common/helpers'
 import {
   SearchAlbumModel,
   SearchArtistModel,
@@ -62,6 +63,69 @@ export class SearchController implements Routes {
 
         const result = await this.searchService.searchAll(query)
 
+        const catalog = await searchGlobalCatalog(query)
+        if (catalog.songs.length > 0 || catalog.albums.length > 0) {
+          const seenSongIds = new Set(catalog.songs.map((s) => s.id))
+          const cleanExistingSongs = catalog.wantsCleanResults
+            ? filterOutKaraoke(result.songs.results)
+            : result.songs.results
+          const prependedSongs = catalog.songs.slice(0, 5).map((s) => ({
+            id: s.id,
+            title: s.name,
+            image: s.image,
+            album: s.album?.name || '',
+            url: s.url,
+            type: 'song',
+            description: s.artists.primary.map((a) => a.name).join(', '),
+            primaryArtists: s.artists.primary.map((a) => a.name).join(', '),
+            singers: s.artists.primary.map((a) => a.name).join(', '),
+            language: s.language || 'english'
+          }))
+          result.songs.results = [
+            ...prependedSongs,
+            ...cleanExistingSongs.filter((s) => !seenSongIds.has(s.id))
+          ]
+
+          const seenAlbumIds = new Set(catalog.albums.map((a) => a.id))
+          const cleanExistingAlbums = catalog.wantsCleanResults
+            ? filterOutKaraoke(result.albums.results)
+            : result.albums.results
+          const prependedAlbums = catalog.albums.slice(0, 4).map((a) => ({
+            id: a.id,
+            title: a.name,
+            image: a.image,
+            artist: a.artists.primary.map((ar) => ar.name).join(', '),
+            url: a.url,
+            type: 'album',
+            description: a.description || '',
+            year: String(a.year || ''),
+            language: a.language || 'english',
+            songIds: (a.songs || []).map((s) => s.id).join(',')
+          }))
+          result.albums.results = [
+            ...prependedAlbums,
+            ...cleanExistingAlbums.filter((a) => !seenAlbumIds.has(a.id))
+          ]
+
+          if (result.topQuery.results.length === 0 && prependedSongs.length > 0) {
+            const top = prependedSongs[0]
+            result.topQuery.results = [
+              {
+                id: top.id,
+                title: top.title,
+                image: top.image,
+                album: top.album,
+                url: top.url,
+                type: 'song',
+                description: top.description,
+                primaryArtists: top.primaryArtists,
+                singers: top.singers,
+                language: top.language
+              }
+            ]
+          }
+        }
+
         return ctx.json({ success: true, data: result })
       }
     )
@@ -120,8 +184,25 @@ export class SearchController implements Routes {
       }),
       async (ctx) => {
         const { query, page, limit } = ctx.req.valid('query')
+        const pageNum = page || 0
+        const pageSize = limit || 10
 
-        const result = await this.searchService.searchSongs({ query, page: page || 0, limit: limit || 10 })
+        const result = await this.searchService.searchSongs({ query, page: pageNum, limit: pageSize })
+
+        if (pageNum === 0) {
+          const catalog = await searchGlobalCatalog(query)
+          if (catalog.songs.length > 0) {
+            const seen = new Set<string>()
+            const base = catalog.wantsCleanResults ? filterOutKaraoke(result.results) : result.results
+            const merged = [...catalog.songs, ...base].filter((s) => {
+              if (!s.id || seen.has(s.id)) return false
+              seen.add(s.id)
+              return true
+            })
+            result.results = merged.slice(0, Math.max(pageSize, 20))
+            result.total = Math.max(result.total, result.results.length)
+          }
+        }
 
         return ctx.json({ success: true, data: result })
       }
@@ -178,8 +259,38 @@ export class SearchController implements Routes {
       }),
       async (ctx) => {
         const { query, page, limit } = ctx.req.valid('query')
+        const pageNum = page || 0
+        const pageSize = limit || 10
 
-        const result = await this.searchService.searchAlbums({ query, page: page || 0, limit: limit || 10 })
+        const result = await this.searchService.searchAlbums({ query, page: pageNum, limit: pageSize })
+
+        if (pageNum === 0) {
+          const catalog = await searchGlobalCatalog(query)
+          if (catalog.albums.length > 0) {
+            const seen = new Set<string>()
+            const base = catalog.wantsCleanResults ? filterOutKaraoke(result.results) : result.results
+            const catalogFormatted = catalog.albums.map((a) => ({
+              id: a.id,
+              name: a.name,
+              description: a.description,
+              year: a.year,
+              type: a.type,
+              playCount: a.playCount,
+              language: a.language,
+              explicitContent: a.explicitContent,
+              artists: a.artists,
+              url: a.url,
+              image: a.image
+            }))
+            const merged = [...catalogFormatted, ...base].filter((a) => {
+              if (!a.id || seen.has(a.id)) return false
+              seen.add(a.id)
+              return true
+            })
+            result.results = merged.slice(0, Math.max(pageSize, 15))
+            result.total = Math.max(result.total, result.results.length)
+          }
+        }
 
         return ctx.json({ success: true, data: result })
       }

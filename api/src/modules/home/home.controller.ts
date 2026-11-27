@@ -1,7 +1,13 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { createDownloadLinks, createImageLinks } from '#common/helpers'
+import {
+  createDownloadLinks,
+  createImageLinks,
+  getGlobalStarterSongs,
+  HOME_ARTIST_QUERIES
+} from '#common/helpers'
 import { userAgents } from '#common/constants'
 import { PlaylistService } from '#modules/playlists/services'
+import { SearchService } from '#modules/search/services'
 import { SongService } from '#modules/songs/services'
 import type { Routes } from '#common/types'
 
@@ -165,11 +171,13 @@ export class HomeController implements Routes {
   public controller: OpenAPIHono
   private songService: SongService
   private playlistService: PlaylistService
+  private searchService: SearchService
 
   constructor() {
     this.controller = new OpenAPIHono()
     this.songService = new SongService()
     this.playlistService = new PlaylistService()
+    this.searchService = new SearchService()
   }
 
   public initRoutes() {
@@ -273,21 +281,110 @@ export class HomeController implements Routes {
           }))
         : []
 
+      // When hosted outside India (e.g. Render US), JioSaavn hides artist_recos & intl playlists;
+      // populate Global/US + Indian hits via song.getDetails (unblocked on all IPs) and real Artist search.
+      let fallbackSongs: typeof intlSongs = []
+      let fallbackAlbums: typeof intlAlbums = []
+      let fallbackArtists: typeof intlArtists = []
+
+      if (intlSongs.length < 4 || rawArtists.length < 4) {
+        const [starterSongs, artistBatches] = await Promise.all([
+          getGlobalStarterSongs(),
+          Promise.all(
+            HOME_ARTIST_QUERIES.map((q) =>
+              this.searchService
+                .searchArtists({ query: q, page: 0, limit: 1 })
+                .then((r) => r.results?.[0] || null)
+                .catch(() => null)
+            )
+          )
+        ])
+
+        for (const s of starterSongs) {
+          fallbackSongs.push({
+            id: s.id,
+            name: decodeHtml(s.name),
+            subtitle: s.artists?.primary?.map((a) => decodeHtml(a.name)).join(', ') || '',
+            type: 'song',
+            url: s.url,
+            language: s.language || 'english',
+            year: s.year,
+            explicitContent: s.explicitContent,
+            songCount: null,
+            duration: s.duration,
+            album: s.album,
+            artists: { primary: s.artists?.primary || [] },
+            image: s.image,
+            downloadUrl: s.downloadUrl
+          })
+          if (s.album?.id && s.album?.name) {
+            fallbackAlbums.push({
+              id: s.album.id,
+              name: decodeHtml(s.album.name),
+              subtitle: s.artists?.primary?.map((a) => decodeHtml(a.name)).join(', ') || 'Album',
+              type: 'album',
+              url: s.album.url || '',
+              language: s.language || 'english',
+              year: s.year,
+              explicitContent: s.explicitContent,
+              songCount: null,
+              duration: null,
+              album: null,
+              artists: { primary: s.artists?.primary || [] },
+              image: s.image,
+              downloadUrl: []
+            })
+          }
+        }
+
+        for (const a of artistBatches) {
+          if (a && a.id && a.name) {
+            fallbackArtists.push({
+              id: a.id,
+              name: decodeHtml(a.name),
+              subtitle: 'Artist',
+              type: 'artist',
+              url: a.url || '',
+              language: 'english',
+              year: null,
+              explicitContent: false,
+              songCount: null,
+              duration: null,
+              album: null,
+              artists: { primary: [] },
+              image: a.image,
+              downloadUrl: []
+            })
+          }
+        }
+      }
+
       // Interleave international + regional artists, albums, and trending songs
       const mixedArtists = dedupeById([
         ...intlArtists.slice(0, 8),
+        ...fallbackArtists,
         ...rawArtists.slice(0, 8),
         ...intlArtists.slice(8)
       ])
       const regionalAlbums = mapList('new_albums').filter((i) => !isSpamSleep(i.name))
       const regionalTrending = mapList('new_trending').filter((i) => !isSpamSleep(i.name))
 
+      const interleave = <T extends { id: string }>(primary: T[], secondary: T[]) => {
+        const out: T[] = []
+        const max = Math.max(primary.length, secondary.length)
+        for (let i = 0; i < max; i++) {
+          if (i < primary.length) out.push(primary[i])
+          if (i < secondary.length) out.push(secondary[i])
+        }
+        return dedupeById(out)
+      }
+
       return ctx.json({
         success: true,
         data: {
-          trending: dedupeById([...intlSongs.slice(0, 10), ...regionalTrending]),
+          trending: interleave([...intlSongs.slice(0, 10), ...fallbackSongs], regionalTrending),
           charts: mapList('charts'),
-          albums: dedupeById([...intlAlbums.slice(0, 10), ...regionalAlbums]),
+          albums: interleave([...intlAlbums.slice(0, 10), ...fallbackAlbums], regionalAlbums),
           playlists: mapList('top_playlists'),
           artists: mixedArtists,
           freshHits: mapList('promo:vx:data:68'),
